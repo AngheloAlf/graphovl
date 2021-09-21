@@ -264,6 +264,7 @@ def main():
     parser.add_argument("filename", help="Filename without the z_ or ovl_ prefix, e.x. Door_Ana")
     parser.add_argument("--loners", help="Include functions that are not called or call any other overlay function", action="store_true")
     parser.add_argument("-s", "--style", help="Use a color style defined in graphovl_styles folder. i.e. solarized")
+    parser.add_argument("--format", help="Select output file format. Defaults to 'png'", default="png")
     args = parser.parse_args()
 
     loadConfigFile(args.style)
@@ -354,7 +355,9 @@ def main():
         addCallNamesToGraph(dot, func_names, index, code_body, setupAction, rawActorFunc)
 
     # print(dot.source)
-    dot.render("graphs/" + fname + ".gv")
+    outname = f"graphs/{fname}.gv"
+    dot.render(outname, format=args.format)
+    print(f"Written to {outname}.{args.format}")
 
 if __name__ == "__main__":
     main()
