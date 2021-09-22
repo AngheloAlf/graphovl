@@ -227,6 +227,10 @@ def addCallNamesToGraph(dot, func_names: list, index: int, code_body: str, setup
         dot.edge(indexStr, calledFuncIndex, color=edgeColor)
 
 def addCallbacksToGraph(dot, func_names: list, index: int, code_body: str, transitionList: list):
+    edgeColor = config.get("colors", "callback")
+    fontColor = config.get("colors", "fontcolor")
+    bubbleColor = config.get("colors", "bubbleColor")
+
     indexStr = str(index)
     seen = set()
     for call_with_arguments in capture_calls(code_body):
@@ -240,10 +244,8 @@ def addCallbacksToGraph(dot, func_names: list, index: int, code_body: str, trans
 
             calledFuncIndex = str(index_of_func(callback))
 
-            # dot.node(calledFuncIndex, callback, fontcolor=fontColor, color=bubbleColor)
-            dot.node(calledFuncIndex, callback)
-            # dot.edge(indexStr, calledFuncIndex, color=edgeColor)
-            dot.edge(indexStr, calledFuncIndex)
+            dot.node(calledFuncIndex, callback, fontcolor=fontColor, color=bubbleColor)
+            dot.edge(indexStr, calledFuncIndex, color=edgeColor)
 
 def loadConfigFile(selectedStyle):
     # For a list of colors, see https://www.graphviz.org/doc/info/colors.html
@@ -259,6 +261,7 @@ def loadConfigFile(selectedStyle):
     config.set('colors', 'actionFunc', 'Black')
     config.set('colors', 'fontColor', 'Black')
     config.set('colors', 'bubbleColor', 'Black')
+    config.set('colors', 'callback', 'blue')
 
     if os.path.exists(configFilename):
         config.read(configFilename)
