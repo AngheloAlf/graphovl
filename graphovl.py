@@ -226,6 +226,24 @@ def addCallNamesToGraph(dot, func_names: list, index: int, code_body: str, setup
         dot.node(calledFuncIndex, call, fontcolor=fontColor, color=bubbleColor)
         dot.edge(indexStr, calledFuncIndex, color=edgeColor)
 
+def addCallbacksToGraph(dot, func_names: list, index: int, code_body: str, transitionList: list):
+    indexStr = str(index)
+    seen = set()
+    for call_with_arguments in capture_calls(code_body):
+        call_with_arguments = call_with_arguments.replace("\n", "").replace(" ", "")
+        name, arguments = call_with_arguments.split("(", 1)
+        for callback in [x for x in func_names if x in arguments]:
+            if callback in transitionList:
+                # already catched in another edge
+                continue
+            seen.add(callback)
+
+            calledFuncIndex = str(index_of_func(callback))
+
+            # dot.node(calledFuncIndex, callback, fontcolor=fontColor, color=bubbleColor)
+            dot.node(calledFuncIndex, callback)
+            # dot.edge(indexStr, calledFuncIndex, color=edgeColor)
+            dot.edge(indexStr, calledFuncIndex)
 
 def loadConfigFile(selectedStyle):
     # For a list of colors, see https://www.graphviz.org/doc/info/colors.html
@@ -353,6 +371,8 @@ def main():
             addFunctionTransitionToGraph(dot, index, func_name, action_transition)
 
         addCallNamesToGraph(dot, func_names, index, code_body, setupAction, rawActorFunc)
+
+        addCallbacksToGraph(dot, func_names, index, code_body, transitionList)
 
     # print(dot.source)
     outname = f"graphs/{fname}.gv"
