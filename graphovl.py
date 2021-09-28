@@ -201,7 +201,7 @@ def addFunctionTransitionToGraph(dot, index: int, func_name: str, action_transit
         edgeColor = config.get("colors", "actionFuncInit")
     dot.edge(indexStr, funcIndex, color=edgeColor)
 
-def addCallNamesToGraph(dot, func_names: list, index: int, code_body: str, setupAction=False, rawActorFunc=False):
+def addCallNamesToGraph(dot, func_names: list, index: int, code_body: str, removeList: list, setupAction=False, rawActorFunc=False):
     edgeColor = config.get("colors", "funcCall")
     fontColor = config.get("colors", "fontcolor")
     bubbleColor = config.get("colors", "bubbleColor")
@@ -212,6 +212,8 @@ def addCallNamesToGraph(dot, func_names: list, index: int, code_body: str, setup
         if call not in func_names:
             continue
         if call in seen:
+            continue
+        if call in removeList:
             continue
 
         if setupAction and "_SetupAction" in call:
@@ -236,7 +238,8 @@ def addCallbacksToGraph(dot, func_names: list, index: int, code_body: str, trans
     for call_with_arguments in capture_calls(code_body):
         call_with_arguments = call_with_arguments.replace("\n", "").replace(" ", "")
         name, arguments = call_with_arguments.split("(", 1)
-        for callback in [x for x in func_names if x in arguments]:
+        argumentList = [x.strip() for x in arguments.split(",")]
+        for callback in [x for x in func_names if x in argumentList]:
             if callback in transitionList:
                 # already catched in another edge
                 continue
@@ -286,14 +289,19 @@ def main():
     parser.add_argument("--loners", help="Include functions that are not called or call any other overlay function", action="store_true")
     parser.add_argument("-s", "--style", help="Use a color style defined in graphovl_styles folder. i.e. solarized")
     parser.add_argument("--format", help="Select output file format. Defaults to 'png'", default="png")
+    parser.add_argument("-r", "--remove", help="A space-separated list of nodes to remove from the graph", nargs='+')
     args = parser.parse_args()
+
+    removeList = []
+    if args.remove is not None:
+        removeList = args.remove
 
     loadConfigFile(args.style)
     fontColor = config.get("colors", "fontcolor")
     bubbleColor = config.get("colors", "bubbleColor")
 
     fname = args.filename
-    dot = Digraph(comment = fname, format = 'png')
+    dot = Digraph(comment = fname, format = args.format)
     dot.attr(bgcolor=config.get("colors", "background"))
     contents = ""
 
@@ -347,6 +355,9 @@ def main():
         action_var = actionVarMatch.group(1).strip()
 
     for index, func_name in enumerate(func_names):
+        if func_name in removeList:
+            continue
+
         indexStr = str(index)
         if args.loners:
             dot.node(indexStr, func_name, fontcolor=fontColor, color=bubbleColor)
@@ -370,16 +381,19 @@ def main():
             """
             transitionList = action_var_values_in_func(code_body, actionIdentifier, macros, enums)
 
+        # Remove functions calls
+        transitionList = [x for x in transitionList if x not in removeList]
+
         for action_transition in transitionList:
             addFunctionTransitionToGraph(dot, index, func_name, action_transition)
 
-        addCallNamesToGraph(dot, func_names, index, code_body, setupAction, rawActorFunc)
+        addCallNamesToGraph(dot, func_names, index, code_body, removeList, setupAction, rawActorFunc)
 
         addCallbacksToGraph(dot, func_names, index, code_body, transitionList)
 
     # print(dot.source)
     outname = f"graphs/{fname}.gv"
-    dot.render(outname, format=args.format)
+    dot.render(outname)
     print(f"Written to {outname}.{args.format}")
 
 if __name__ == "__main__":
