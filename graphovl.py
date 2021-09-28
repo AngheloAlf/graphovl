@@ -57,7 +57,12 @@ def capture_setupaction_calls(content):
 
 # Captures the function name of a setupaction call
 def capture_setupaction_call_arg(content):
-    return [x.group().split(",")[1].strip().split(");")[0].strip() for x in re.finditer(setupaction_regexpr, content)]
+    transitionList = []
+    for x in re.finditer(setupaction_regexpr, content):
+        func = x.group().split(",")[1].strip().split(");")[0].strip()
+        if func not in transitionList:
+            transitionList.append(func)
+    return transitionList
 
 # Search for the function definition by supplied function name
 def definition_by_name(content, name):
@@ -171,7 +176,8 @@ def action_var_values_in_func(code_body, action_var, macros, enums):
         elif index in enums:
             index = str(enums[index])
 
-        transition.append(index)
+        if index not in transition:
+            transition.append(index)
     return transition
 
 def setup_line_numbers(content, func_names):
