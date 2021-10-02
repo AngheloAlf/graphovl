@@ -3,9 +3,17 @@
 # Generates graphs for actor overlay files
 #
 
-from graphviz import Digraph
-import argparse, os, re
+import argparse, os, re, sys
 from configparser import ConfigParser
+
+try:
+    from graphviz import Digraph
+except ModuleNotFoundError:
+    print("Module 'graphviz' is not installed", file=sys.stderr)
+    print("You can install it using: pip3 install graphviz", file=sys.stderr)
+    print("You may also need to install it on your system", file=sys.stderr)
+    print("On Debian/Ubuntu derivates you can use: apt install graphviz", file=sys.stderr)
+    sys.exit(1)
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 config = ConfigParser()
