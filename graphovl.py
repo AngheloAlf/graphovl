@@ -45,19 +45,22 @@ indirectCallRegexpr = re.compile(r'(this->[a-zA-Z_\d]+)\s*=\s*([a-zA-Z_\d]+);')
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
-
 @dataclasses.dataclass
 class Macro:
     name: str
     params: list[str]
     body: str
 
-    def callMacro(self, argsList: list[str]) -> str|None:
+    def callMacro(self, argsList: list[str], enums: EnumContainer) -> str|None:
         macroBody = self.body
 
         # Replace the passed arguments in the macro body
         for i, x in enumerate(self.params):
-            macroBody = macroBody.replace(x, argsList[i])
+            arg = argsList[i]
+
+            # If `arg` is an enum, then get its value, otherwise use `arg`
+            arg = enums.getDefault(arg, arg)
+            macroBody = macroBody.replace(x, arg)
 
         try:
             value = str(eval(macroBody))
@@ -82,7 +85,7 @@ class MacrosContainer:
     def __init__(self):
         self.macros: dict[str, Macro] = dict()
 
-    def parseMacro(self, expr: str) -> str|None:
+    def parseMacro(self, expr: str, enums: EnumContainer) -> str|None:
         macroCall = func_call_regexpr.match(expr)
 
         # Check if the macro expression is being called as a function
@@ -95,7 +98,7 @@ class MacrosContainer:
             macro = self.macros[macroName]
             argsList = [x.strip() for x in macroArgs.split(",")]
 
-            return macro.callMacro(argsList)
+            return macro.callMacro(argsList, enums)
 
         # Check if macro is used as-is
         if expr in self.macros:
@@ -121,6 +124,54 @@ class MacrosContainer:
 
             macrosDefs.macros[macroName] = Macro(macroName, macroParams, macroBody)
         return macrosDefs
+
+
+@dataclasses.dataclass
+class Enum:
+    name: str
+    value: int
+
+class EnumContainer:
+    def __init__(self):
+        self.enums: dict[str, Enum] = dict()
+
+    def get(self, enumName: str, default: str|None=None) -> str|None:
+        if enumName in self.enums:
+            return str(self.enums[enumName].value)
+        return default
+
+    def getDefault(self, enumName: str, default: str) -> str:
+        if enumName in self.enums:
+            return str(self.enums[enumName].value)
+        return default
+
+    @staticmethod
+    def getEnums(contents: str) -> EnumContainer:
+        enums = EnumContainer()
+
+        for x in re.finditer(enumsRegexpr, contents):
+            enumValue = 0
+            for var in x.group(1).split(","):
+                if "/*" in var and "*/" in var:
+                    start = var.index("/*")
+                    end = var.index("*/") + len("*/")
+                    var = var[:start] + var[end:]
+                if "//" in var:
+                    var = var[:var.index("//")]
+                var = var.strip()
+                if len(var) == 0:
+                    continue
+
+                enumName = var
+                exprList = var.split("=")
+                if len(exprList) > 1:
+                    enumName = exprList[0].strip()
+                    enumValue = int(exprList[1], 0)
+
+                enums.enums[enumName] = Enum(enumName, enumValue)
+                enumValue += 1
+        return enums
+
 
 # Capture all function calls in the block, including arguments
 def capture_calls(content):
@@ -198,32 +249,6 @@ def get_code_body(content, funcname) -> str:
             code += raw_line
     return code
 
-def getEnums(contents: str) -> dict[str, int]:
-    enums: dict[str, int] = dict()
-    for x in re.finditer(enumsRegexpr, contents):
-        enumValue = 0
-        for var in x.group(1).split(","):
-            if "/*" in var and "*/" in var:
-                start = var.index("/*")
-                end = var.index("*/") + len("*/")
-                var = var[:start] + var[end:]
-            if "//" in var:
-                var = var[:var.index("//")]
-            var = var.strip()
-            if len(var) == 0:
-                continue
-
-            enumName = var
-            exprList = var.split("=")
-            if len(exprList) > 1:
-                enumName = exprList[0].strip()
-                enumValue = int(exprList[1], 0)
-
-            enums[enumName] = enumValue
-            enumValue +=1
-
-    return enums
-
 def getIndirectMemberFuncs(code_body: str) -> set[str]:
     members: set[str] = set()
 
@@ -251,7 +276,7 @@ def action_var_setups_in_func(content, func_name, action_var):
         return None
     return [x.group() for x in re.finditer(r'(' + action_var + r' = (.)*)', code_body)]
 
-def action_var_values_in_func(code_body, action_var, macros: MacrosContainer, enums):
+def action_var_values_in_func(code_body, action_var, macros: MacrosContainer, enums: EnumContainer):
     if action_var not in code_body:
         return list()
 
@@ -260,17 +285,19 @@ def action_var_values_in_func(code_body, action_var, macros: MacrosContainer, en
     for x in re.finditer(regex, code_body):
         index = x.group().split(" = ")[1].split(";")[0].strip()
 
-        macroValue = macros.parseMacro(index)
+        macroValue = macros.parseMacro(index, enums)
         if macroValue is not None:
             index = macroValue
-        elif index in enums:
-            index = str(enums[index])
+        else:
+            enumValue = enums.get(index)
+            if enumValue is not None:
+                index = enumValue
 
         if index not in transition:
             transition.append(index)
     return transition
 
-def getIndirectFunctionsInFunc(code_body: str, indirectMemberFuncs: set[str], macros: MacrosContainer, enums: dict[str, int], removeList: list[str]) -> list[str]:
+def getIndirectFunctionsInFunc(code_body: str, indirectMemberFuncs: set[str], macros: MacrosContainer, enums: EnumContainer, removeList: list[str]) -> list[str]:
     indirectFunctions: list[str] = []
 
     for member in indirectMemberFuncs:
@@ -452,7 +479,7 @@ def main():
     setup_func_definitions(contents, func_names)
     setup_line_numbers(contents, func_names)
     macros: MacrosContainer = MacrosContainer.getMacrosDefinitions(contents)
-    enums = getEnums(contents)
+    enums: EnumContainer = EnumContainer.getEnums(contents)
     func_prefix = ""
     for index, func_name in enumerate(func_names):
         # Init is chosen because all actors are guaranteed to have an Init function.
