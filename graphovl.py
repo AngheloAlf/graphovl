@@ -3,6 +3,8 @@
 # Generates graphs for actor overlay files
 #
 
+from __future__ import annotations
+
 import argparse, os, re, sys
 from configparser import ConfigParser
 
@@ -18,7 +20,7 @@ except ModuleNotFoundError:
 script_dir = os.path.dirname(os.path.realpath(__file__))
 config = ConfigParser()
 
-func_names = list()
+func_names: list[str] = list()
 func_definitions = list()
 line_numbers_of_functions = list()
 
@@ -37,6 +39,7 @@ func_call_regexpr = re.compile(r'[a-zA-Z_\d]+\([^\)]*\)(\.[^\)]*\))?')
 func_defs_regexpr = re.compile(r'[a-zA-Z_\d]+\([^\)]*\)(\.[^\)]*\))? {[^}]')
 macrosRegexpr = re.compile(r'#define\s+([a-zA-Z_\d]+)(\([a-zA-Z_\d]+\))?\s+(.+?)(\n|//|/\*)')
 enumsRegexpr = re.compile(r'enum\s+\{([^\}]+?)\}')
+indirectCallRegexpr = re.compile(r'(this->[a-zA-Z_\d]+)\s*=\s*([a-zA-Z_\d]+);')
 
 # Capture all function calls in the block, including arguments
 def capture_calls(content):
@@ -51,8 +54,8 @@ def capture_definitions(content):
     return [x.group() for x in re.finditer(func_defs_regexpr, content)]
 
 # Capture all function definitions in the block, name only
-def capture_definition_names(content):
-    definitions = []
+def capture_definition_names(content: str) -> list[str]:
+    definitions: list[str] = []
     for x in re.finditer(func_defs_regexpr, content):
         definitions.append(x.group().split("(")[0])
     return definitions
@@ -114,8 +117,8 @@ def get_code_body(content, funcname) -> str:
             code += raw_line
     return code
 
-def getMacrosDefinitions(contents):
-    macrosDefs = dict()
+def getMacrosDefinitions(contents: str) -> dict[str, tuple[list[str], str]]:
+    macrosDefs: dict[str, tuple[list[str], str]] = dict()
     for x in re.finditer(macrosRegexpr, contents):
         macroName = x.group(1).strip()
         macroParamsAux = x.group(2)
@@ -147,8 +150,8 @@ def parseMacro(macros, macroExpr):
         return str(eval(macroBody))
     return None
 
-def getEnums(contents):
-    enums = dict()
+def getEnums(contents: str) -> dict[str, int]:
+    enums: dict[str, int] = dict()
     for x in re.finditer(enumsRegexpr, contents):
         enumValue = 0
         for var in x.group(1).split(","):
@@ -173,9 +176,27 @@ def getEnums(contents):
 
     return enums
 
+def getIndirectMemberFuncs(code_body: str) -> set[str]:
+    members: set[str] = set()
+
+    for x in indirectCallRegexpr.finditer(code_body):
+        member = x.group(1)
+        value = x.group(2)
+
+        if member == "this->actionFunc":
+            continue
+
+        if value in func_names:
+            # print(member, value)
+            if member not in members:
+                members.add(member)
+    return members
+
+
 def index_of_func(func_name):
     return func_names.index(func_name)
 
+# unused, remove?
 def action_var_setups_in_func(content, func_name, action_var):
     code_body = get_code_body(content, func_name)
     if action_var not in code_body:
@@ -200,6 +221,16 @@ def action_var_values_in_func(code_body, action_var, macros, enums):
         if index not in transition:
             transition.append(index)
     return transition
+
+def getIndirectFunctionsInFunc(code_body: str, indirectMemberFuncs: set[str], macros: dict[str, tuple[list[str], str]], enums: dict[str, int], removeList: list[str]) -> list[str]:
+    indirectFunctions: list[str] = []
+
+    for member in indirectMemberFuncs:
+        for name in action_var_values_in_func(code_body, member, macros, enums):
+            if name not in indirectFunctions and name not in removeList:
+                indirectFunctions.append(name)
+
+    return indirectFunctions
 
 def setup_line_numbers(content, func_names):
     global line_numbers_of_functions
@@ -281,6 +312,30 @@ def addCallbacksToGraph(dot, func_names: list, index: int, code_body: str, trans
             dot.node(calledFuncIndex, callback, fontcolor=fontColor, color=bubbleColor)
             dot.edge(indexStr, calledFuncIndex, color=edgeColor)
 
+
+def addIndirectFunctionsToGraph(dot, func_names: list, index: int, indirectFunctions: list[str]):
+    edgeColor = config.get("colors", "indirectMember")
+    fontColor = config.get("colors", "fontcolor")
+    bubbleColor = config.get("colors", "bubbleColor")
+
+    indexStr = str(index)
+    seen = set()
+    for call in indirectFunctions:
+        if call not in func_names:
+            continue
+        if call in seen:
+            continue
+
+        seen.add(call)
+
+        dot.node(indexStr, func_names[index], fontcolor=fontColor, color=bubbleColor)
+
+        calledFuncIndex = str(index_of_func(call))
+
+        dot.node(calledFuncIndex, call, fontcolor=fontColor, color=bubbleColor)
+        dot.edge(indexStr, calledFuncIndex, color=edgeColor)
+
+
 def loadConfigFile(selectedStyle):
     # For a list of colors, see https://www.graphviz.org/doc/info/colors.html
     # Hex colors works too!
@@ -326,6 +381,8 @@ def main():
     removeList = []
     if args.remove is not None:
         removeList = args.remove
+
+    removeList.append("NULL")
 
     loadConfigFile(args.style)
     fontColor = config.get("colors", "fontcolor")
@@ -386,6 +443,18 @@ def main():
             os._exit(1)
         action_var = actionVarMatch.group(1).strip()
 
+    functionBodies: dict[str, str] = dict()
+
+    indirectMemberFuncs: set[str] = set()
+    """Actor members that point to a function, i.e this->msgEventFunc"""
+
+    for index, func_name in enumerate(func_names):
+        code_body = get_code_body(contents, func_name)
+
+        functionBodies[func_name] = code_body
+
+        indirectMemberFuncs.update(getIndirectMemberFuncs(code_body))
+
     for index, func_name in enumerate(func_names):
         if func_name in removeList:
             continue
@@ -393,7 +462,7 @@ def main():
         indexStr = str(index)
         if args.loners:
             dot.node(indexStr, func_name, fontcolor=fontColor, color=bubbleColor)
-        code_body = get_code_body(contents, func_name)
+        code_body = functionBodies[func_name]
 
         transitionList = []
         if setupAction:
@@ -424,6 +493,10 @@ def main():
         addCallNamesToGraph(dot, func_names, index, code_body, removeList, setupAction, rawActorFunc)
 
         addCallbacksToGraph(dot, func_names, index, code_body, transitionList)
+
+        indirectFunctions = getIndirectFunctionsInFunc(code_body, indirectMemberFuncs, macros, enums, removeList)
+
+        addIndirectFunctionsToGraph(dot, func_names, index, indirectFunctions)
 
     # print(dot.source)
     outname = f"graphs/{fname}.gv"
