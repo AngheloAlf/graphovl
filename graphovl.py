@@ -166,7 +166,12 @@ class EnumContainer:
                 exprList = var.split("=")
                 if len(exprList) > 1:
                     enumName = exprList[0].strip()
-                    enumValue = int(exprList[1], 0)
+                    valueExpr = exprList[1].strip()
+
+                    # Enum values can be defined to have the same value of another enum value
+                    valueExpr = enums.getDefault(valueExpr, valueExpr)
+
+                    enumValue = int(valueExpr, 0)
 
                 enums.enums[enumName] = Enum(enumName, enumValue)
                 enumValue += 1
