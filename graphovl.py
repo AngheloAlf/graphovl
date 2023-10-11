@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse, os, re, sys
 from configparser import ConfigParser
 import dataclasses
-import traceback
 
 try:
     from graphviz import Digraph
@@ -65,7 +64,6 @@ class Macro:
         except Exception as e:
             eprint(f"Warning: error ocurred while calling macro '{self.name}' with arguments {argsList}")
             eprint(f"    Exception info: {e}")
-            traceback.print_exc()
             eprint()
             value = None
         return value
@@ -76,7 +74,6 @@ class Macro:
         except Exception as e:
             eprint(f"Warning: error ocurred while expanding macro '{self.name}'")
             eprint(f"    Exception info: {e}")
-            traceback.print_exc()
             eprint()
             value = None
         return value
@@ -532,7 +529,13 @@ def main():
             Create all edges for ActorFunc array-based actors
             """
             transitionIndexes = action_var_values_in_func(code_body, action_var, macros, enums)
-            transitionList = [action_functions[int(index, 0)] for index in transitionIndexes]
+            for indexStr in transitionIndexes:
+                try:
+                    indexTemp = int(indexStr)
+                except:
+                    eprint(f"Warning: not able to parse index expression '{indexStr}'")
+                    continue
+                transitionList.append(action_functions[indexTemp])
         elif rawActorFunc:
             """
             Create all edges for raw ActorFunc-based actors
