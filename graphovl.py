@@ -243,7 +243,11 @@ def setup_line_numbers(content, func_names):
 def setup_func_definitions(content, func_names):
     global func_definitions
     for func_name in func_names:
-        func_definitions.append(definition_by_name(content, func_name)+" {")
+        definition = definition_by_name(content, func_name)
+        if definition is None:
+            print(f"Warning: not able to find definition for '{func_name}'. Skiping...", file=sys.stderr)
+            continue
+        func_definitions.append(definition+" {")
 
 
 def addFunctionTransitionToGraph(dot, index: int, func_name: str, action_transition: str):
