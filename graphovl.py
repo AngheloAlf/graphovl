@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import argparse, os, re, sys
 from configparser import ConfigParser
+import dataclasses
+import traceback
 
 try:
     from graphviz import Digraph
@@ -40,6 +42,88 @@ func_defs_regexpr = re.compile(r'[a-zA-Z_\d]+\([^\)]*\)(\.[^\)]*\))? {[^}]')
 macrosRegexpr = re.compile(r'#define\s+([a-zA-Z_\d]+)(\([a-zA-Z_\d]+\))?\s+(.+?)(\n|//|/\*)')
 enumsRegexpr = re.compile(r'enum\s+\{([^\}]+?)\}')
 indirectCallRegexpr = re.compile(r'(this->[a-zA-Z_\d]+)\s*=\s*([a-zA-Z_\d]+);')
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+
+@dataclasses.dataclass
+class Macro:
+    name: str
+    params: list[str]
+    body: str
+
+    def callMacro(self, argsList: list[str]) -> str|None:
+        macroBody = self.body
+
+        # Replace the passed arguments in the macro body
+        for i, x in enumerate(self.params):
+            macroBody = macroBody.replace(x, argsList[i])
+
+        try:
+            value = str(eval(macroBody))
+        except Exception as e:
+            eprint(f"Warning: error ocurred while calling macro '{self.name}' with arguments {argsList}")
+            eprint(f"    Exception info: {e}")
+            traceback.print_exc()
+            eprint()
+            value = None
+        return value
+
+    def simpleExpand(self) -> str|None:
+        try:
+            value = str(eval(self.body))
+        except Exception as e:
+            eprint(f"Warning: error ocurred while expanding macro '{self.name}'")
+            eprint(f"    Exception info: {e}")
+            traceback.print_exc()
+            eprint()
+            value = None
+        return value
+
+class MacrosContainer:
+    def __init__(self):
+        self.macros: dict[str, Macro] = dict()
+
+    def parseMacro(self, expr: str) -> str|None:
+        macroCall = func_call_regexpr.match(expr)
+
+        # Check if the macro expression is being called as a function
+        if macroCall is not None:
+            macroName, macroArgs = macroCall.group().split(")")[0].split("(")
+            if macroName not in self.macros:
+                print("Unknown macro: " + macroName)
+                return None
+
+            macro = self.macros[macroName]
+            argsList = [x.strip() for x in macroArgs.split(",")]
+
+            return macro.callMacro(argsList)
+
+        # Check if macro is used as-is
+        if expr in self.macros:
+            macro = self.macros[expr]
+            return macro.simpleExpand()
+
+        return None
+
+    @staticmethod
+    def getMacrosDefinitions(contents: str) -> MacrosContainer:
+        macrosDefs = MacrosContainer()
+
+        for x in macrosRegexpr.finditer(contents):
+            macroName = x.group(1).strip()
+            macroParamsAux = x.group(2)
+            macroBody = x.group(3).strip()
+
+            # Process macro parameters
+            macroParams = []
+            if macroParamsAux is not None:
+                for x in macroParamsAux.strip("(").strip(")").split(","):
+                    macroParams.append(x.strip())
+
+            macrosDefs.macros[macroName] = Macro(macroName, macroParams, macroBody)
+        return macrosDefs
 
 # Capture all function calls in the block, including arguments
 def capture_calls(content):
@@ -117,39 +201,6 @@ def get_code_body(content, funcname) -> str:
             code += raw_line
     return code
 
-def getMacrosDefinitions(contents: str) -> dict[str, tuple[list[str], str]]:
-    macrosDefs: dict[str, tuple[list[str], str]] = dict()
-    for x in re.finditer(macrosRegexpr, contents):
-        macroName = x.group(1).strip()
-        macroParamsAux = x.group(2)
-        macroBody = x.group(3).strip()
-
-        macroParams = []
-        if macroParamsAux is not None:
-            for x in macroParamsAux.strip("(").strip(")").split(","):
-                macroParams.append(x.strip())
-        macrosDefs[macroName] = (macroParams, macroBody)
-    return macrosDefs
-
-def parseMacro(macros, macroExpr):
-    macroCall = func_call_regexpr.match(macroExpr)
-    if macroCall is not None:
-        macroName, macroArgs = macroCall.group().split(")")[0].split("(")
-        if macroName not in macros:
-            print("Unknown macro: " + macroName)
-            return None
-        macroParams, macroBody = macros[macroName]
-        argsList = [x.strip() for x in macroArgs.split(",")]
-
-        macroBody = str(macroBody)
-        for i, x in enumerate(macroParams):
-            macroBody = macroBody.replace(x, argsList[i])
-        return str(eval(macroBody))
-    elif macroExpr in macros:
-        macroParams, macroBody = macros[macroExpr]
-        return str(eval(macroBody))
-    return None
-
 def getEnums(contents: str) -> dict[str, int]:
     enums: dict[str, int] = dict()
     for x in re.finditer(enumsRegexpr, contents):
@@ -203,7 +254,7 @@ def action_var_setups_in_func(content, func_name, action_var):
         return None
     return [x.group() for x in re.finditer(r'(' + action_var + r' = (.)*)', code_body)]
 
-def action_var_values_in_func(code_body, action_var, macros, enums):
+def action_var_values_in_func(code_body, action_var, macros: MacrosContainer, enums):
     if action_var not in code_body:
         return list()
 
@@ -212,7 +263,7 @@ def action_var_values_in_func(code_body, action_var, macros, enums):
     for x in re.finditer(regex, code_body):
         index = x.group().split(" = ")[1].split(";")[0].strip()
 
-        macroValue = parseMacro(macros, index)
+        macroValue = macros.parseMacro(index)
         if macroValue is not None:
             index = macroValue
         elif index in enums:
@@ -222,7 +273,7 @@ def action_var_values_in_func(code_body, action_var, macros, enums):
             transition.append(index)
     return transition
 
-def getIndirectFunctionsInFunc(code_body: str, indirectMemberFuncs: set[str], macros: dict[str, tuple[list[str], str]], enums: dict[str, int], removeList: list[str]) -> list[str]:
+def getIndirectFunctionsInFunc(code_body: str, indirectMemberFuncs: set[str], macros: MacrosContainer, enums: dict[str, int], removeList: list[str]) -> list[str]:
     indirectFunctions: list[str] = []
 
     for member in indirectMemberFuncs:
@@ -403,7 +454,7 @@ def main():
     func_names = capture_definition_names(contents)
     setup_func_definitions(contents, func_names)
     setup_line_numbers(contents, func_names)
-    macros = getMacrosDefinitions(contents)
+    macros: MacrosContainer = MacrosContainer.getMacrosDefinitions(contents)
     enums = getEnums(contents)
     func_prefix = ""
     for index, func_name in enumerate(func_names):
